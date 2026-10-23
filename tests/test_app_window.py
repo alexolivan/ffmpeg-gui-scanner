@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 from PyQt5 import QtWidgets, QtCore
 from discovery_client import DiscoveryListener
 from app_window import ScannerMainWindow
+from i18n import detect_system_language, translate
 
 # Singleton QApplication for test suite
 app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
@@ -17,7 +18,7 @@ app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
 class TestAppWindow(unittest.TestCase):
     def setUp(self):
         self.listener = DiscoveryListener(port=59997)
-        self.window = ScannerMainWindow(self.listener)
+        self.window = ScannerMainWindow(self.listener, initial_lang="en")
 
     def tearDown(self):
         self.window.close()
@@ -91,6 +92,21 @@ class TestAppWindow(unittest.TestCase):
         self.window._filter_rows("")
         self.assertFalse(self.window.table.isRowHidden(0))
         self.assertFalse(self.window.table.isRowHidden(1))
+
+    def test_language_switching(self):
+        # Switch to Spanish
+        idx_es = self.window.combo_lang.findData("es")
+        self.window.combo_lang.setCurrentIndex(idx_es)
+        self.assertEqual(self.window._current_lang, "es")
+        self.assertIn("Escáner", self.window.title_label.text())
+        self.assertEqual(self.window.btn_scan.text(), "🔍 Escanear LAN")
+
+        # Switch to Catalan
+        idx_ca = self.window.combo_lang.findData("ca")
+        self.window.combo_lang.setCurrentIndex(idx_ca)
+        self.assertEqual(self.window._current_lang, "ca")
+        self.assertIn("Escàner", self.window.title_label.text())
+        self.assertEqual(self.window.btn_scan.text(), "🔍 Escanejar LAN")
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ from typing import Dict, Any, Optional
 
 from PyQt5 import QtCore, QtGui, QtWidgets
 from discovery_client import DiscoveryListener
+from i18n import detect_system_language, translate, SUPPORTED_LANGUAGES
 
 logger = logging.getLogger("ScannerWindow")
 
@@ -27,7 +28,7 @@ QTableWidget {
 }
 
 QTableWidget::item {
-    padding: 6px 10px;
+    padding: 4px 8px;
     border-bottom: 1px solid #22252c;
 }
 
@@ -67,6 +68,7 @@ QPushButton#btnScan {
     color: #121316;
     border: 1px solid #a3e635;
     font-weight: 700;
+    padding: 6px 16px;
 }
 
 QPushButton#btnScan:hover {
@@ -78,10 +80,12 @@ QPushButton#btnOpenGui {
     background-color: rgba(163, 230, 53, 0.12);
     color: #a3e635;
     border: 1px solid rgba(163, 230, 53, 0.35);
-    border-radius: 4px;
+    border-radius: 6px;
     padding: 4px 10px;
     font-size: 11px;
     font-weight: 700;
+    min-height: 26px;
+    margin: 2px 4px;
 }
 
 QPushButton#btnOpenGui:hover {
@@ -99,6 +103,34 @@ QLineEdit {
 
 QLineEdit:focus {
     border: 1px solid #a3e635;
+}
+
+QComboBox {
+    background-color: #18191e;
+    color: #f3f4f6;
+    border: 1px solid #282b33;
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QComboBox:hover {
+    border-color: #a3e635;
+}
+
+QComboBox::drop-down {
+    border: none;
+    width: 20px;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #18191e;
+    color: #f3f4f6;
+    selection-background-color: #282b33;
+    selection-color: #a3e635;
+    border: 1px solid #323640;
+    padding: 4px;
 }
 
 QCheckBox {
@@ -138,17 +170,18 @@ class ScannerMainWindow(QtWidgets.QMainWindow):
     COL_STREAMS = 6
     COL_ACTION = 7
 
-    def __init__(self, listener: DiscoveryListener, parent=None):
+    def __init__(self, listener: DiscoveryListener, initial_lang: Optional[str] = None, parent=None):
         super().__init__(parent)
         self.listener = listener
+        self._current_lang = initial_lang or detect_system_language()
         self._node_rows: Dict[str, int] = {}  # node_id -> row_index
 
-        self.setWindowTitle("FFmpeg GUI - LAN Appliance Scanner")
-        self.resize(1020, 560)
-        self.setMinimumSize(780, 400)
+        self.resize(1050, 580)
+        self.setMinimumSize(820, 420)
         self.setStyleSheet(DARK_STYLE)
 
         self._setup_ui()
+        self._retranslate_ui()
         self._connect_signals()
 
         # Background auto-scan timer (5 seconds)
@@ -156,6 +189,9 @@ class ScannerMainWindow(QtWidgets.QMainWindow):
         self._auto_scan_timer.setInterval(5000)
         self._auto_scan_timer.timeout.connect(self._on_auto_scan_tick)
         self._auto_scan_timer.start()
+
+    def t(self, key: str, **kwargs) -> str:
+        return translate(key, lang=self._current_lang, **kwargs)
 
     def _setup_ui(self):
         central_widget = QtWidgets.QWidget(self)
@@ -169,17 +205,29 @@ class ScannerMainWindow(QtWidgets.QMainWindow):
         header_title_layout = QtWidgets.QVBoxLayout()
         header_title_layout.setSpacing(2)
 
-        title_label = QtWidgets.QLabel("📡 FFmpeg GUI Appliance Scanner", self)
-        title_label.setStyleSheet("font-size: 18px; font-weight: 800; color: #f3f4f6;")
-        subtitle_label = QtWidgets.QLabel("Live auto-discovery of ffmpeg-gui broadcast nodes across the local subnet", self)
-        subtitle_label.setStyleSheet("font-size: 12px; color: #9ca3af;")
+        self.title_label = QtWidgets.QLabel(self)
+        self.title_label.setStyleSheet("font-size: 18px; font-weight: 800; color: #f3f4f6;")
+        self.subtitle_label = QtWidgets.QLabel(self)
+        self.subtitle_label.setStyleSheet("font-size: 12px; color: #9ca3af;")
 
-        header_title_layout.addWidget(title_label)
-        header_title_layout.addWidget(subtitle_label)
+        header_title_layout.addWidget(self.title_label)
+        header_title_layout.addWidget(self.subtitle_label)
         header_layout.addLayout(header_title_layout)
         header_layout.addStretch()
 
-        self.btn_scan = QtWidgets.QPushButton("🔍 Scan LAN", self)
+        # Language switcher combo
+        self.combo_lang = QtWidgets.QComboBox(self)
+        for code, label in SUPPORTED_LANGUAGES.items():
+            self.combo_lang.addItem(label, code)
+        # Select active language
+        idx = self.combo_lang.findData(self._current_lang)
+        if idx >= 0:
+            self.combo_lang.setCurrentIndex(idx)
+        self.combo_lang.currentIndexChanged.connect(self._on_language_changed)
+        header_layout.addWidget(self.combo_lang)
+
+        # Scan LAN Button
+        self.btn_scan = QtWidgets.QPushButton(self)
         self.btn_scan.setObjectName("btnScan")
         self.btn_scan.setCursor(QtCore.Qt.PointingHandCursor)
         self.btn_scan.clicked.connect(self.scan_now)
@@ -192,16 +240,15 @@ class ScannerMainWindow(QtWidgets.QMainWindow):
         controls_layout.setSpacing(12)
 
         self.search_input = QtWidgets.QLineEdit(self)
-        self.search_input.setPlaceholderText("Filter nodes by name, alias, or IP address...")
         self.search_input.textChanged.connect(self._filter_rows)
         controls_layout.addWidget(self.search_input, stretch=1)
 
-        self.cb_autoscan = QtWidgets.QCheckBox("Auto-scan (5s)", self)
+        self.cb_autoscan = QtWidgets.QCheckBox(self)
         self.cb_autoscan.setChecked(True)
         self.cb_autoscan.toggled.connect(self._toggle_autoscan)
         controls_layout.addWidget(self.cb_autoscan)
 
-        self.lbl_stats = QtWidgets.QLabel("Nodes: 0 (0 online)", self)
+        self.lbl_stats = QtWidgets.QLabel(self)
         self.lbl_stats.setStyleSheet("color: #a3e635; font-weight: 700; font-size: 12px; padding: 0 4px;")
         controls_layout.addWidget(self.lbl_stats)
 
@@ -209,13 +256,12 @@ class ScannerMainWindow(QtWidgets.QMainWindow):
 
         # Nodes Table
         self.table = QtWidgets.QTableWidget(0, 8, self)
-        headers = ["Status", "Node Name", "Alias", "IP Address", "Ports", "Version", "Streams", "Access"]
-        self.table.setHorizontalHeaderLabels(headers)
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(44)  # Generous height preventing button vertical clipping
         self.table.setSortingEnabled(True)
 
         header = self.table.horizontalHeader()
@@ -226,7 +272,8 @@ class ScannerMainWindow(QtWidgets.QMainWindow):
         header.setSectionResizeMode(self.COL_PORTS, QtWidgets.QHeaderView.ResizeToContents)
         header.setSectionResizeMode(self.COL_VERSION, QtWidgets.QHeaderView.ResizeToContents)
         header.setSectionResizeMode(self.COL_STREAMS, QtWidgets.QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(self.COL_ACTION, QtWidgets.QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(self.COL_ACTION, QtWidgets.QHeaderView.Fixed)
+        self.table.setColumnWidth(self.COL_ACTION, 155)  # Fixed width ensuring "Open Web GUI ↗" fits comfortably
 
         self.table.cellDoubleClicked.connect(self._on_cell_double_clicked)
         main_layout.addWidget(self.table)
@@ -234,7 +281,47 @@ class ScannerMainWindow(QtWidgets.QMainWindow):
         # Status Bar
         self.status_bar = QtWidgets.QStatusBar(self)
         self.setStatusBar(self.status_bar)
-        self.status_bar.showMessage("Listening for UDP beacons on port 59990...")
+
+    def _retranslate_ui(self):
+        """Update all user-visible text in current language."""
+        self.setWindowTitle(self.t("app_title"))
+        self.title_label.setText(self.t("header_title"))
+        self.subtitle_label.setText(self.t("header_subtitle"))
+        self.btn_scan.setText(self.t("btn_scan"))
+        self.search_input.setPlaceholderText(self.t("search_placeholder"))
+        self.cb_autoscan.setText(self.t("autoscan_label"))
+
+        headers = [
+            self.t("col_status"),
+            self.t("col_name"),
+            self.t("col_alias"),
+            self.t("col_ip"),
+            self.t("col_ports"),
+            self.t("col_version"),
+            self.t("col_streams"),
+            self.t("col_action")
+        ]
+        self.table.setHorizontalHeaderLabels(headers)
+        self.status_bar.showMessage(self.t("status_listening"))
+
+        # Retranslate existing table rows
+        for r in range(self.table.rowCount()):
+            status_item = self.table.item(r, self.COL_STATUS)
+            if status_item:
+                is_online = ("Online" in status_item.text() or "línea" in status_item.text().lower() or "línia" in status_item.text().lower())
+                self._apply_status_styling(status_item, "online" if is_online else "offline")
+
+            btn = self.table.cellWidget(r, self.COL_ACTION)
+            if isinstance(btn, QtWidgets.QPushButton):
+                btn.setText(self.t("btn_open_gui"))
+
+        self._update_stats()
+
+    def _on_language_changed(self, index: int):
+        lang_code = self.combo_lang.itemData(index)
+        if lang_code and lang_code != self._current_lang:
+            self._current_lang = lang_code
+            self._retranslate_ui()
 
     def _connect_signals(self):
         self.listener.node_discovered.connect(self.on_node_discovered)
@@ -244,7 +331,7 @@ class ScannerMainWindow(QtWidgets.QMainWindow):
     def scan_now(self):
         """Send broadcast discovery query."""
         self.listener.send_query()
-        self.status_bar.showMessage("Broadcast DISCOVER_QUERY sent on 59990/UDP...", 3000)
+        self.status_bar.showMessage(self.t("status_query_sent"), 3000)
 
     def _on_auto_scan_tick(self):
         if self.cb_autoscan.isChecked():
@@ -261,12 +348,11 @@ class ScannerMainWindow(QtWidgets.QMainWindow):
         if not node_id:
             return
 
-        # Temporarily disable sorting while updating to prevent index shifts
         sorting_enabled = self.table.isSortingEnabled()
         self.table.setSortingEnabled(False)
 
-        row = self._node_rows.get(node_id)
-        if row is None or row >= self.table.rowCount():
+        row = self._find_row_by_node_id(node_id)
+        if row is None:
             row = self.table.rowCount()
             self.table.insertRow(row)
             self._node_rows[node_id] = row
@@ -274,6 +360,7 @@ class ScannerMainWindow(QtWidgets.QMainWindow):
         self._populate_row(row, data, status="online")
 
         self.table.setSortingEnabled(sorting_enabled)
+        self._rebuild_row_map()
         self._update_stats()
 
     def on_node_status_changed(self, node_id: str, new_status: str):
@@ -361,14 +448,14 @@ class ScannerMainWindow(QtWidgets.QMainWindow):
         self.table.setItem(row, self.COL_VERSION, ver_item)
 
         # 7. Streams Column
-        streams_str = f"⚡ {active_streams} streams / {running_services} svcs"
+        streams_str = self.t("streams_format", active=active_streams, services=running_services)
         streams_item = QtWidgets.QTableWidgetItem(streams_str)
         streams_item.setTextAlignment(QtCore.Qt.AlignCenter)
         streams_item.setForeground(QtGui.QBrush(QtGui.QColor("#9ca3af")))
         self.table.setItem(row, self.COL_STREAMS, streams_item)
 
         # 8. Action Button
-        btn_open = QtWidgets.QPushButton("Open Web GUI ↗", self.table)
+        btn_open = QtWidgets.QPushButton(self.t("btn_open_gui"), self.table)
         btn_open.setObjectName("btnOpenGui")
         btn_open.setCursor(QtCore.Qt.PointingHandCursor)
         btn_open.clicked.connect(lambda checked, url=web_url: webbrowser.open(url))
@@ -381,13 +468,13 @@ class ScannerMainWindow(QtWidgets.QMainWindow):
 
     def _apply_status_styling(self, item: QtWidgets.QTableWidgetItem, status: str):
         if status == "online":
-            item.setText(" 🟢 Online")
-            item.setForeground(QtGui.QBrush(QtGui.QColor("#4ade80")))  # Emerald / Lime Green
-            item.setToolTip("Appliance responding actively to LAN beacons (<10s)")
+            item.setText(self.t("badge_online"))
+            item.setForeground(QtGui.QBrush(QtGui.QColor("#4ade80")))
+            item.setToolTip(self.t("tooltip_online"))
         else:
-            item.setText(" 🔴 Offline")
-            item.setForeground(QtGui.QBrush(QtGui.QColor("#f87171")))  # Red
-            item.setToolTip("Appliance silent for >10s (rebooting or disconnected)")
+            item.setText(self.t("badge_offline"))
+            item.setForeground(QtGui.QBrush(QtGui.QColor("#f87171")))
+            item.setToolTip(self.t("tooltip_offline"))
 
     def _on_cell_double_clicked(self, row: int, column: int):
         status_item = self.table.item(row, self.COL_STATUS)
@@ -399,11 +486,12 @@ class ScannerMainWindow(QtWidgets.QMainWindow):
     def _update_stats(self):
         total = self.table.rowCount()
         online = 0
+        online_badge = self.t("badge_online").strip()
         for r in range(total):
             item = self.table.item(r, self.COL_STATUS)
-            if item and "Online" in item.text():
+            if item and online_badge in item.text():
                 online += 1
-        self.lbl_stats.setText(f"Nodes: {total} ({online} online)")
+        self.lbl_stats.setText(self.t("stats_format", total=total, online=online))
 
     def _filter_rows(self, query: str):
         query = query.strip().lower()

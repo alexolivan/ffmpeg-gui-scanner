@@ -9,11 +9,12 @@ A lightweight, dark-themed desktop utility built with PyQt5 to discover and conn
 - **Robust Machine Tracking**: Primary-keyed by unique `node_id` (derived from `/etc/machine-id`), preventing duplicate or ghost rows when appliances obtain new DHCP leases or share hostnames.
 - **Reactive Vitality States**:
   - 🟢 **Online**: Appliance beacon received within the last 10 seconds.
-  - 🔴 **Offline**: Appliance has been silent for 10–60 seconds (rebooting or updating).
-  - 🗑️ **Expired**: Gracefully removes ghost entries after 60 seconds of silence.
+  - 🔴 **Offline**: Appliance has been silent for 10–60 seconds (disabled, updating, or disconnected).
+  - 🗑️ **Expired**: Gracefully removes ghost entries after 60 seconds of continuous silence.
   - **Auto-Recovery**: Instantly returns to 🟢 Online state as soon as a new packet is observed.
 - **One-Click Launch**: Direct `Open Web GUI` action to launch the appliance dashboard in the system default browser (HTTP or HTTPS).
 - **Search & Filter**: Real-time filtering by node name, alias, or IP address.
+- **Multilingual Support**: Fully aligned with `ffmpeg-gui` with support for English, Spanish, and Catalan. Automatically detects system desktop language with instant in-app language switcher.
 
 ## Installation & Requirements
 
