@@ -14,9 +14,9 @@ except ImportError:
                 return _SysLocale()
 
 SUPPORTED_LANGUAGES = {
-    "en": "🇺🇸 English",
-    "es": "🇪🇸 Español",
-    "ca": "🐱 Català"
+    "en": "English",
+    "es": "Español",
+    "ca": "Català"
 }
 
 TRANSLATIONS: Dict[str, Dict[str, str]] = {
