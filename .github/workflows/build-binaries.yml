@@ -1,0 +1,125 @@
+name: Build & Package Multi-Platform Binaries
+
+on:
+  push:
+    branches: [ devel, main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ devel, main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+            binary_src: dist/ffmpeg-gui-scanner.exe
+            binary_dist: ffmpeg-gui-scanner-windows-x64.exe
+          - os: macos-latest
+            platform: macos
+            binary_src: dist/ffmpeg-gui-scanner
+            binary_dist: ffmpeg-gui-scanner-macos
+          - os: ubuntu-22.04
+            platform: linux
+            binary_src: dist/ffmpeg-gui-scanner
+            binary_dist: ffmpeg-gui-scanner-linux-x64
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Linux System Qt Dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgl1-mesa-glx \
+            libxkbcommon-x11-0 \
+            libxcb-icccm4 \
+            libxcb-image0 \
+            libxcb-keysyms1 \
+            libxcb-randr0 \
+            libxcb-render-util0 \
+            libxcb-xinerama0 \
+            libxcb-shape0 \
+            libxcb-cursor0
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Run Unit Tests
+        run: |
+          python -m unittest discover tests
+
+      - name: Build Standalone Executable (PyInstaller)
+        run: |
+          pyinstaller --noconfirm --onefile --windowed --paths src --name ffmpeg-gui-scanner main.py
+
+      - name: Prepare Binary Artifact (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          Copy-Item "${{ matrix.binary_src }}" -Destination "${{ matrix.binary_dist }}"
+
+      - name: Prepare Binary Artifact (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          chmod +x "${{ matrix.binary_src }}"
+          cp "${{ matrix.binary_src }}" "${{ matrix.binary_dist }}"
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.binary_dist }}
+          path: ${{ matrix.binary_dist }}
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download Windows Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ffmpeg-gui-scanner-windows-x64.exe
+          path: release-assets/
+
+      - name: Download macOS Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ffmpeg-gui-scanner-macos
+          path: release-assets/
+
+      - name: Download Linux Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ffmpeg-gui-scanner-linux-x64
+          path: release-assets/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false

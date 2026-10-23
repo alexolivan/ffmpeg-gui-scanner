@@ -6,6 +6,7 @@ from typing import Dict, Any, Optional
 from PyQt5 import QtCore, QtGui, QtWidgets
 from discovery_client import DiscoveryListener
 from i18n import detect_system_language, translate, SUPPORTED_LANGUAGES
+from version import __version__
 
 logger = logging.getLogger("ScannerWindow")
 
@@ -205,12 +206,27 @@ class ScannerMainWindow(QtWidgets.QMainWindow):
         header_title_layout = QtWidgets.QVBoxLayout()
         header_title_layout.setSpacing(2)
 
+        title_row = QtWidgets.QHBoxLayout()
+        title_row.setSpacing(8)
+        title_row.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+
         self.title_label = QtWidgets.QLabel(self)
         self.title_label.setStyleSheet("font-size: 18px; font-weight: 800; color: #f3f4f6;")
+
+        self.version_badge = QtWidgets.QLabel(f"v{__version__}", self)
+        self.version_badge.setStyleSheet(
+            "font-size: 11px; font-weight: 700; font-family: monospace; "
+            "color: #a3e635; background-color: rgba(163, 230, 53, 0.12); "
+            "border: 1px solid rgba(163, 230, 53, 0.3); border-radius: 4px; padding: 2px 6px;"
+        )
+
+        title_row.addWidget(self.title_label)
+        title_row.addWidget(self.version_badge)
+
         self.subtitle_label = QtWidgets.QLabel(self)
         self.subtitle_label.setStyleSheet("font-size: 12px; color: #9ca3af;")
 
-        header_title_layout.addWidget(self.title_label)
+        header_title_layout.addLayout(title_row)
         header_title_layout.addWidget(self.subtitle_label)
         header_layout.addLayout(header_title_layout)
         header_layout.addStretch()

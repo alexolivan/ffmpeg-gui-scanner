@@ -62,3 +62,12 @@ python3 -m unittest discover tests
 ## License
 
 GPLv3 / Apache 2.0 (consistent with the ffmpeg-gui ecosystem).
+
+## Precompiled Binaries (Windows, macOS, Linux)
+
+Automated standalone executables are compiled on every release via GitHub Actions:
+- **Windows**: `ffmpeg-gui-scanner-windows-x64.exe` (standalone `.exe`, no Python installation required)
+- **macOS**: `ffmpeg-gui-scanner-macos` (Apple Silicon & Intel)
+- **Linux**: `ffmpeg-gui-scanner-linux-x64` (standalone executable)
+
+Download the latest precompiled executable from the [Releases](https://github.com/alexolivan/ffmpeg-gui-scanner/releases) tab.
