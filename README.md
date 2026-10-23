@@ -2,6 +2,8 @@
 
 A lightweight, dark-themed desktop utility built with PyQt5 to discover and connect to `ffmpeg-gui` appliances running across local broadcast networks.
 
+![FFmpeg GUI Scanner Overview](docs/assets/screenshot.png)
+
 ## Features
 
 - **Automatic LAN Discovery**: Passively receives UDP beacons emitted on port `59990/udp` by active `ffmpeg-gui` instances.
