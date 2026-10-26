@@ -1,4 +1,6 @@
 import sys
+import os
+import subprocess
 import webbrowser
 import logging
 from typing import Dict, Any, Optional
@@ -9,6 +11,72 @@ from i18n import detect_system_language, translate, SUPPORTED_LANGUAGES
 from version import __version__
 
 logger = logging.getLogger("ScannerWindow")
+
+
+def open_browser(url: str) -> bool:
+    """
+    Open a web URL in the user's default browser safely.
+    Handles PyInstaller LD_LIBRARY_PATH / DYLD_LIBRARY_PATH pollution that
+    causes external browsers and xdg-open/gio to crash with symbol errors.
+    """
+    if not url:
+        return False
+    logger.info(f"Opening browser URL: {url}")
+
+    # Clean environment copy to prevent PyInstaller library clashes
+    clean_env = dict(os.environ)
+    for var in ("LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "LIBPATH", "SHLIB_PATH"):
+        orig = f"{var}_ORIG"
+        if orig in clean_env:
+            clean_env[var] = clean_env[orig]
+        else:
+            clean_env.pop(var, None)
+
+    # 1. Native QDesktopServices with cleaned environment
+    # On Unix, QDesktopServices may invoke xdg-open / gio, so temporarily patch os.environ
+    saved_env = {}
+    for var in ("LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"):
+        if var in os.environ:
+            saved_env[var] = os.environ[var]
+            if f"{var}_ORIG" in os.environ:
+                os.environ[var] = os.environ[f"{var}_ORIG"]
+            else:
+                del os.environ[var]
+
+    try:
+        qurl = QtCore.QUrl(url)
+        if QtGui.QDesktopServices.openUrl(qurl):
+            return True
+    except Exception as e:
+        logger.debug(f"QDesktopServices.openUrl error: {e}")
+    finally:
+        for var, val in saved_env.items():
+            os.environ[var] = val
+
+    # 2. Platform-specific fallback subprocesses with cleaned environment
+    try:
+        if sys.platform.startswith("linux"):
+            for launcher in ("xdg-open", "gio", "x-www-browser", "firefox", "chromium", "google-chrome"):
+                if any(os.access(os.path.join(p, launcher), os.X_OK) for p in os.environ.get("PATH", "").split(os.pathsep)):
+                    cmd = [launcher, "open", url] if launcher == "gio" else [launcher, url]
+                    subprocess.Popen(cmd, env=clean_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    return True
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", url], env=clean_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True
+        elif sys.platform in ("win32", "cygwin"):
+            if hasattr(os, "startfile"):
+                os.startfile(url)
+                return True
+    except Exception as e:
+        logger.debug(f"Subprocess launcher fallback failed: {e}")
+
+    # 3. Final fallback: standard webbrowser module
+    try:
+        return webbrowser.open(url)
+    except Exception as e:
+        logger.error(f"Failed to open browser URL {url}: {e}")
+        return False
 
 DARK_STYLE = """
 QMainWindow, QWidget {
@@ -378,6 +446,8 @@ class ScannerMainWindow(QtWidgets.QMainWindow):
         self.table.setSortingEnabled(sorting_enabled)
         self._rebuild_row_map()
         self._update_stats()
+        if self.search_input.text():
+            self._filter_rows(self.search_input.text())
 
     def on_node_status_changed(self, node_id: str, new_status: str):
         row = self._find_row_by_node_id(node_id)
@@ -421,61 +491,98 @@ class ScannerMainWindow(QtWidgets.QMainWindow):
         active_streams = data.get("active_streams", 0)
 
         # 1. Status Column
-        status_item = QtWidgets.QTableWidgetItem()
+        status_item = self.table.item(row, self.COL_STATUS)
+        if not status_item:
+            status_item = QtWidgets.QTableWidgetItem()
+            self.table.setItem(row, self.COL_STATUS, status_item)
         status_item.setData(QtCore.Qt.UserRole, node_id)
         status_item.setData(QtCore.Qt.UserRole + 1, web_url)
         self._apply_status_styling(status_item, status)
-        self.table.setItem(row, self.COL_STATUS, status_item)
 
         # 2. Name Column
-        name_item = QtWidgets.QTableWidgetItem(node_name)
-        name_item.setFont(QtGui.QFont("", 11, QtGui.QFont.Bold))
+        name_item = self.table.item(row, self.COL_NAME)
+        if not name_item:
+            name_item = QtWidgets.QTableWidgetItem()
+            name_item.setFont(QtGui.QFont("", 11, QtGui.QFont.Bold))
+            self.table.setItem(row, self.COL_NAME, name_item)
+        name_item.setText(node_name)
         name_item.setData(QtCore.Qt.UserRole + 1, web_url)
-        self.table.setItem(row, self.COL_NAME, name_item)
 
         # 3. Alias Column
-        alias_item = QtWidgets.QTableWidgetItem(node_alias)
-        alias_item.setTextAlignment(QtCore.Qt.AlignCenter)
-        alias_item.setForeground(QtGui.QBrush(QtGui.QColor("#a3e635")))
-        font = QtGui.QFont("Monospace", 10)
-        font.setBold(True)
-        alias_item.setFont(font)
-        self.table.setItem(row, self.COL_ALIAS, alias_item)
+        alias_item = self.table.item(row, self.COL_ALIAS)
+        if not alias_item:
+            alias_item = QtWidgets.QTableWidgetItem()
+            alias_item.setTextAlignment(QtCore.Qt.AlignCenter)
+            alias_item.setForeground(QtGui.QBrush(QtGui.QColor("#a3e635")))
+            font = QtGui.QFont("Monospace", 10)
+            font.setBold(True)
+            alias_item.setFont(font)
+            self.table.setItem(row, self.COL_ALIAS, alias_item)
+        alias_item.setText(node_alias)
 
         # 4. IP Column
-        ip_item = QtWidgets.QTableWidgetItem(ip)
-        ip_item.setTextAlignment(QtCore.Qt.AlignCenter)
-        ip_item.setFont(QtGui.QFont("Monospace", 10))
-        self.table.setItem(row, self.COL_IP, ip_item)
+        ip_item = self.table.item(row, self.COL_IP)
+        if not ip_item:
+            ip_item = QtWidgets.QTableWidgetItem()
+            ip_item.setTextAlignment(QtCore.Qt.AlignCenter)
+            ip_item.setFont(QtGui.QFont("Monospace", 10))
+            self.table.setItem(row, self.COL_IP, ip_item)
+        ip_item.setText(ip)
 
         # 5. Ports Column
         ports_str = f"HTTP:{http_port}"
         if https_port:
             ports_str += f" | HTTPS:{https_port}"
-        ports_item = QtWidgets.QTableWidgetItem(ports_str)
-        ports_item.setTextAlignment(QtCore.Qt.AlignCenter)
-        ports_item.setForeground(QtGui.QBrush(QtGui.QColor("#9ca3af")))
-        self.table.setItem(row, self.COL_PORTS, ports_item)
+        ports_item = self.table.item(row, self.COL_PORTS)
+        if not ports_item:
+            ports_item = QtWidgets.QTableWidgetItem()
+            ports_item.setTextAlignment(QtCore.Qt.AlignCenter)
+            ports_item.setForeground(QtGui.QBrush(QtGui.QColor("#9ca3af")))
+            self.table.setItem(row, self.COL_PORTS, ports_item)
+        ports_item.setText(ports_str)
 
         # 6. Version Column
-        ver_item = QtWidgets.QTableWidgetItem(f"v{version}")
-        ver_item.setTextAlignment(QtCore.Qt.AlignCenter)
-        ver_item.setForeground(QtGui.QBrush(QtGui.QColor("#cbd5e1")))
-        self.table.setItem(row, self.COL_VERSION, ver_item)
+        ver_item = self.table.item(row, self.COL_VERSION)
+        if not ver_item:
+            ver_item = QtWidgets.QTableWidgetItem()
+            ver_item.setTextAlignment(QtCore.Qt.AlignCenter)
+            ver_item.setForeground(QtGui.QBrush(QtGui.QColor("#cbd5e1")))
+            self.table.setItem(row, self.COL_VERSION, ver_item)
+        ver_item.setText(f"v{version}")
 
         # 7. Streams Column
         streams_str = self.t("streams_format", active=active_streams, services=running_services)
-        streams_item = QtWidgets.QTableWidgetItem(streams_str)
-        streams_item.setTextAlignment(QtCore.Qt.AlignCenter)
-        streams_item.setForeground(QtGui.QBrush(QtGui.QColor("#9ca3af")))
-        self.table.setItem(row, self.COL_STREAMS, streams_item)
+        streams_item = self.table.item(row, self.COL_STREAMS)
+        if not streams_item:
+            streams_item = QtWidgets.QTableWidgetItem()
+            streams_item.setTextAlignment(QtCore.Qt.AlignCenter)
+            streams_item.setForeground(QtGui.QBrush(QtGui.QColor("#9ca3af")))
+            self.table.setItem(row, self.COL_STREAMS, streams_item)
+        streams_item.setText(streams_str)
 
-        # 8. Action Button
-        btn_open = QtWidgets.QPushButton(self.t("btn_open_gui"), self.table)
-        btn_open.setObjectName("btnOpenGui")
-        btn_open.setCursor(QtCore.Qt.PointingHandCursor)
-        btn_open.clicked.connect(lambda checked, url=web_url: webbrowser.open(url))
-        self.table.setCellWidget(row, self.COL_ACTION, btn_open)
+        # 8. Action Button (created once per row to prevent click race conditions)
+        btn_open = self.table.cellWidget(row, self.COL_ACTION)
+        if not isinstance(btn_open, QtWidgets.QPushButton):
+            btn_open = QtWidgets.QPushButton(self.t("btn_open_gui"), self.table)
+            btn_open.setObjectName("btnOpenGui")
+            btn_open.setCursor(QtCore.Qt.PointingHandCursor)
+            btn_open.clicked.connect(self._on_open_gui_clicked)
+            self.table.setCellWidget(row, self.COL_ACTION, btn_open)
+        else:
+            btn_open.setText(self.t("btn_open_gui"))
+
+    def _on_open_gui_clicked(self):
+        btn = self.sender()
+        if not btn:
+            return
+        for r in range(self.table.rowCount()):
+            if self.table.cellWidget(r, self.COL_ACTION) is btn:
+                status_item = self.table.item(r, self.COL_STATUS)
+                if status_item:
+                    url = status_item.data(QtCore.Qt.UserRole + 1)
+                    if url:
+                        open_browser(url)
+                break
 
     def _update_status_item(self, row: int, status: str):
         item = self.table.item(row, self.COL_STATUS)
@@ -497,7 +604,7 @@ class ScannerMainWindow(QtWidgets.QMainWindow):
         if status_item:
             url = status_item.data(QtCore.Qt.UserRole + 1)
             if url:
-                webbrowser.open(url)
+                open_browser(url)
 
     def _update_stats(self):
         total = self.table.rowCount()
