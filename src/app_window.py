@@ -249,6 +249,16 @@ class ScannerMainWindow(QtWidgets.QMainWindow):
         self.setMinimumSize(820, 420)
         self.setStyleSheet(DARK_STYLE)
 
+        app_icon = QtWidgets.QApplication.windowIcon()
+        if not app_icon.isNull():
+            self.setWindowIcon(app_icon)
+        else:
+            base_dir = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            for p in [os.path.join(base_dir, "assets", "icon.png"), os.path.join(base_dir, "assets", "icon.ico")]:
+                if os.path.exists(p):
+                    self.setWindowIcon(QtGui.QIcon(p))
+                    break
+
         self._setup_ui()
         self._retranslate_ui()
         self._connect_signals()
