@@ -21,16 +21,16 @@ jobs:
         include:
           - os: windows-latest
             platform: windows
-            binary_src: dist/ffmpeg-gui-scanner.exe
-            binary_dist: ffmpeg-gui-scanner-windows-x64.exe
+            artifact_name: ffmpeg-gui-scanner-windows-x64.exe
+            artifact_path: ffmpeg-gui-scanner-windows-x64.exe
           - os: macos-latest
             platform: macos
-            binary_src: dist/ffmpeg-gui-scanner
-            binary_dist: ffmpeg-gui-scanner-macos
+            artifact_name: ffmpeg-gui-scanner-macos.dmg
+            artifact_path: ffmpeg-gui-scanner-macos.dmg
           - os: ubuntu-22.04
             platform: linux
-            binary_src: dist/ffmpeg-gui-scanner
-            binary_dist: ffmpeg-gui-scanner-linux-x64
+            artifact_name: ffmpeg-gui-scanner-linux-x64
+            artifact_path: ffmpeg-gui-scanner-linux-x64
 
     steps:
       - name: Checkout Source Code
@@ -67,26 +67,31 @@ jobs:
         run: |
           python -m unittest discover tests
 
-      - name: Build Standalone Executable (PyInstaller)
-        run: |
-          pyinstaller --noconfirm --onefile --windowed --paths src --name ffmpeg-gui-scanner main.py
-
-      - name: Prepare Binary Artifact (Windows)
+      - name: Build Standalone Executable (Windows)
         if: runner.os == 'Windows'
         run: |
-          Copy-Item "${{ matrix.binary_src }}" -Destination "${{ matrix.binary_dist }}"
+          pyinstaller --noconfirm --onefile --windowed --paths src --icon assets/icon.ico --add-data "assets;assets" --name ffmpeg-gui-scanner main.py
+          Copy-Item "dist/ffmpeg-gui-scanner.exe" -Destination "${{ matrix.artifact_path }}"
 
-      - name: Prepare Binary Artifact (Unix)
-        if: runner.os != 'Windows'
+      - name: Build Standalone Executable (Linux)
+        if: runner.os == 'Linux'
         run: |
-          chmod +x "${{ matrix.binary_src }}"
-          cp "${{ matrix.binary_src }}" "${{ matrix.binary_dist }}"
+          pyinstaller --noconfirm --onefile --windowed --paths src --icon assets/icon.png --add-data "assets:assets" --name ffmpeg-gui-scanner main.py
+          chmod +x "dist/ffmpeg-gui-scanner"
+          cp "dist/ffmpeg-gui-scanner" "${{ matrix.artifact_path }}"
+
+      - name: Build Standalone Application Bundle & DMG (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          pyinstaller --noconfirm --onefile --windowed --paths src --icon assets/icon.icns --add-data "assets:assets" --osx-bundle-identifier com.alexolivan.ffmpeg-gui-scanner --name "ffmpeg-gui-scanner" main.py
+          # Package the .app bundle into a native macOS DMG disk image
+          hdiutil create -volname "FFmpeg GUI Scanner" -srcfolder "dist/ffmpeg-gui-scanner.app" -ov -format UDZO "${{ matrix.artifact_path }}"
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.binary_dist }}
-          path: ${{ matrix.binary_dist }}
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_path }}
           if-no-files-found: error
 
   release:
@@ -107,7 +112,7 @@ jobs:
       - name: Download macOS Artifact
         uses: actions/download-artifact@v4
         with:
-          name: ffmpeg-gui-scanner-macos
+          name: ffmpeg-gui-scanner-macos.dmg
           path: release-assets/
 
       - name: Download Linux Artifact
