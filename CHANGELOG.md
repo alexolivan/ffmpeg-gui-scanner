@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-11-13
+
+### Added
+- **Multi-NIC Subnet Resolution & WinBox-Style Interface Selector (`src/network_utils.py`, `src/discovery_client.py`, `src/app_window.py`, `src/i18n.py`)**:
+  - Enumerates local active IPv4 subnets via `PyQt5.QtNetwork.QNetworkInterface` (filtering loopback and virtual/container adapters) and dispatches `DISCOVER_QUERY` to every local directed subnet broadcast in addition to `255.255.255.255`.
+  - Automatically selects the node IP matching the scanner's local subnet with deterministic anti-flapping tie-breaking when both host and appliance are multi-homed, plus legacy fallback to `sender_ip` (`addr[0]`) for older `ffmpeg-gui` beacons.
+  - Added `(+N)` multi-NIC badge, detailed interface/MAC tooltip, right-click & IP-cell WinBox-style selector menu with persistent per-node IP pinning (`QSettings`), clipboard copy actions (`Copy IP`, `Copy Web URL`), and search filtering across secondary IPs and MAC addresses.
+
 ## [1.0.0] - 2026-10-26
 
 ### Added

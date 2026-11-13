@@ -3,7 +3,7 @@ import os
 import subprocess
 import webbrowser
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 from PyQt5 import QtCore, QtGui, QtWidgets
 from discovery_client import DiscoveryListener
@@ -244,6 +244,8 @@ class ScannerMainWindow(QtWidgets.QMainWindow):
         self.listener = listener
         self._current_lang = initial_lang or detect_system_language()
         self._node_rows: Dict[str, int] = {}  # node_id -> row_index
+        self._settings = QtCore.QSettings("ffmpeg-gui", "scanner")
+        self._load_preferred_ips()
 
         self.resize(1050, 580)
         self.setMinimumSize(820, 420)
@@ -370,6 +372,9 @@ class ScannerMainWindow(QtWidgets.QMainWindow):
         self.table.setColumnWidth(self.COL_ACTION, 155)  # Fixed width ensuring "Open Web GUI ↗" fits comfortably
 
         self.table.cellDoubleClicked.connect(self._on_cell_double_clicked)
+        self.table.cellClicked.connect(self._on_cell_clicked)
+        self.table.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._on_table_context_menu)
         main_layout.addWidget(self.table)
 
         # Status Bar
@@ -530,14 +535,26 @@ class ScannerMainWindow(QtWidgets.QMainWindow):
             self.table.setItem(row, self.COL_ALIAS, alias_item)
         alias_item.setText(node_alias)
 
-        # 4. IP Column
+        # 4. IP Column (with multi-NIC badge and WinBox-style tooltip)
+        candidates: List[Dict[str, Any]] = data.get("candidates") or []
+        is_pinned = bool(data.get("is_pinned", False))
+        ip_display = ip
+        if len(candidates) > 1:
+            ip_display = f"{ip} (+{len(candidates) - 1})"
+        if is_pinned:
+            ip_display = f"📌 {ip_display}"
+
         ip_item = self.table.item(row, self.COL_IP)
         if not ip_item:
             ip_item = QtWidgets.QTableWidgetItem()
             ip_item.setTextAlignment(QtCore.Qt.AlignCenter)
             ip_item.setFont(QtGui.QFont("Monospace", 10))
             self.table.setItem(row, self.COL_IP, ip_item)
-        ip_item.setText(ip)
+        ip_item.setText(ip_display)
+        ip_item.setData(QtCore.Qt.UserRole + 2, candidates)
+        ip_item.setData(QtCore.Qt.UserRole + 3, is_pinned)
+        ip_item.setData(QtCore.Qt.UserRole + 4, ip)
+        ip_item.setToolTip(self._format_ip_tooltip(candidates, ip, is_pinned))
 
         # 5. Ports Column
         ports_str = f"HTTP:{http_port}"
@@ -609,6 +626,122 @@ class ScannerMainWindow(QtWidgets.QMainWindow):
             item.setForeground(QtGui.QBrush(QtGui.QColor("#f87171")))
             item.setToolTip(self.t("tooltip_offline"))
 
+    def _load_preferred_ips(self):
+        """Restore persisted per-node IP preferences into the discovery listener."""
+        self._settings.beginGroup("preferred_ips")
+        for nid in self._settings.childKeys():
+            saved_ip = self._settings.value(nid)
+            if saved_ip and isinstance(saved_ip, str):
+                self.listener._preferred_ips.setdefault(nid, saved_ip)
+        self._settings.endGroup()
+
+    def _format_ip_tooltip(self, candidates: List[Dict[str, Any]], active_ip: str, is_pinned: bool) -> str:
+        if not candidates:
+            return active_ip
+        lines = [self.t("ip_tooltip_header")]
+        if is_pinned:
+            lines.append(f"📌 {self.t('ip_tooltip_pinned')}")
+        for c in candidates:
+            marker = "✓" if c.get("ip") == active_ip else " "
+            tags = []
+            if c.get("same_subnet"):
+                tags.append(self.t("ip_same_subnet"))
+            elif c.get("default"):
+                tags.append(self.t("ip_gateway_tag"))
+            mac_str = f" [{c['mac']}]" if c.get("mac") else ""
+            tag_str = f" ({', '.join(tags)})" if tags else ""
+            lines.append(
+                f"{marker} {c.get('iface', '-')}: {c.get('ip')}/{c.get('prefixlen', 24)}{mac_str}{tag_str}"
+            )
+        return "\n".join(lines)
+
+    def _select_node_ip(self, node_id: str, ip: Optional[str]):
+        self._settings.beginGroup("preferred_ips")
+        if ip:
+            self._settings.setValue(node_id, ip)
+        else:
+            self._settings.remove(node_id)
+        self._settings.endGroup()
+        self.listener.set_preferred_ip(node_id, ip)
+
+    def _copy_to_clipboard(self, value: str):
+        if not value:
+            return
+        clipboard = QtWidgets.QApplication.clipboard()
+        if clipboard:
+            clipboard.setText(value)
+            self.status_bar.showMessage(self.t("status_copied", value=value), 3000)
+
+    def _build_node_context_menu(self, row: int) -> Optional[QtWidgets.QMenu]:
+        status_item = self.table.item(row, self.COL_STATUS)
+        ip_item = self.table.item(row, self.COL_IP)
+        if not status_item or not ip_item:
+            return None
+
+        node_id = status_item.data(QtCore.Qt.UserRole)
+        web_url = status_item.data(QtCore.Qt.UserRole + 1)
+        candidates: List[Dict[str, Any]] = ip_item.data(QtCore.Qt.UserRole + 2) or []
+        is_pinned = bool(ip_item.data(QtCore.Qt.UserRole + 3))
+        active_ip = ip_item.data(QtCore.Qt.UserRole + 4) or ip_item.text()
+
+        menu = QtWidgets.QMenu(self)
+        menu.setStyleSheet(
+            "QMenu { background-color: #1e2026; color: #f3f4f6; border: 1px solid #323640; padding: 4px; }"
+            "QMenu::item { padding: 6px 14px; border-radius: 4px; }"
+            "QMenu::item:selected { background-color: #2d3340; color: #a3e635; }"
+        )
+
+        if candidates:
+            for c in candidates:
+                c_ip = c.get("ip", "")
+                tags = []
+                if c.get("same_subnet"):
+                    tags.append(self.t("ip_same_subnet"))
+                elif c.get("default"):
+                    tags.append(self.t("ip_gateway_tag"))
+                mac_part = f"  [{c['mac']}]" if c.get("mac") else ""
+                tag_part = f" ({', '.join(tags)})" if tags else ""
+                label = f"{c.get('iface', '-')} — {c_ip}/{c.get('prefixlen', 24)}{mac_part}{tag_part}"
+                act = menu.addAction(label)
+                act.setCheckable(True)
+                act.setChecked(c_ip == active_ip)
+                act.triggered.connect(lambda _checked=False, nid=node_id, target=c_ip: self._select_node_ip(nid, target))
+
+            auto_act = menu.addAction(self.t("ip_auto_select"))
+            auto_act.setCheckable(True)
+            auto_act.setChecked(not is_pinned)
+            auto_act.triggered.connect(lambda _checked=False, nid=node_id: self._select_node_ip(nid, None))
+            menu.addSeparator()
+
+        open_act = menu.addAction(self.t("btn_open_gui"))
+        open_act.triggered.connect(lambda _checked=False, u=web_url: open_browser(u))
+
+        copy_ip_act = menu.addAction(self.t("action_copy_ip", ip=active_ip))
+        copy_ip_act.triggered.connect(lambda _checked=False, v=active_ip: self._copy_to_clipboard(v))
+
+        copy_url_act = menu.addAction(self.t("action_copy_url"))
+        copy_url_act.triggered.connect(lambda _checked=False, v=web_url: self._copy_to_clipboard(v))
+        return menu
+
+    def _on_table_context_menu(self, pos: QtCore.QPoint):
+        item = self.table.itemAt(pos)
+        if not item:
+            return
+        menu = self._build_node_context_menu(item.row())
+        if menu:
+            menu.exec_(self.table.viewport().mapToGlobal(pos))
+
+    def _on_cell_clicked(self, row: int, column: int):
+        if column != self.COL_IP:
+            return
+        ip_item = self.table.item(row, self.COL_IP)
+        candidates = (ip_item.data(QtCore.Qt.UserRole + 2) or []) if ip_item else []
+        if len(candidates) > 1:
+            menu = self._build_node_context_menu(row)
+            if menu:
+                rect = self.table.visualItemRect(ip_item)
+                menu.exec_(self.table.viewport().mapToGlobal(rect.bottomLeft()))
+
     def _on_cell_double_clicked(self, row: int, column: int):
         status_item = self.table.item(row, self.COL_STATUS)
         if status_item:
@@ -636,8 +769,15 @@ class ScannerMainWindow(QtWidgets.QMainWindow):
             name = name_item.text().lower() if name_item else ""
             alias = alias_item.text().lower() if alias_item else ""
             ip = ip_item.text().lower() if ip_item else ""
+            candidates = (ip_item.data(QtCore.Qt.UserRole + 2) or []) if ip_item else []
+            cand_match = any(
+                query in (c.get("ip") or "").lower()
+                or query in (c.get("mac") or "").lower()
+                or query in (c.get("iface") or "").lower()
+                for c in candidates
+            )
 
-            match = (not query) or (query in name) or (query in alias) or (query in ip)
+            match = (not query) or (query in name) or (query in alias) or (query in ip) or cand_match
             self.table.setRowHidden(r, not match)
 
     def closeEvent(self, event):

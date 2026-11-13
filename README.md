@@ -7,7 +7,8 @@ A lightweight, dark-themed desktop utility built with PyQt5 to discover and conn
 ## Features
 
 - **Automatic LAN Discovery**: Passively receives UDP beacons emitted on port `59990/udp` by active `ffmpeg-gui` instances.
-- **Immediate Active Scan**: Dispatches broadcast `DISCOVER_QUERY` packets across `255.255.255.255:59990` for instant node discovery without waiting for heartbeat cycles.
+- **Immediate Active Scan**: Dispatches broadcast `DISCOVER_QUERY` packets across all local subnet directed broadcasts and `255.255.255.255:59990` for instant node discovery without waiting for heartbeat cycles.
+- **Multi-NIC Subnet Matching & Interface Selector**: Automatically selects the appliance IP matching the scanner's local subnet on dual-homed hosts, and provides a context/IP-cell selector menu (with persistent per-node IP pinning, MAC inspection, and clipboard copy actions).
 - **Robust Machine Tracking**: Primary-keyed by unique `node_id` (derived from `/etc/machine-id`), preventing duplicate or ghost rows when appliances obtain new DHCP leases or share hostnames.
 - **Reactive Vitality States**:
   - 🟢 **Online**: Appliance beacon received within the last 10 seconds.
@@ -15,7 +16,7 @@ A lightweight, dark-themed desktop utility built with PyQt5 to discover and conn
   - 🗑️ **Expired**: Gracefully removes ghost entries after 60 seconds of continuous silence.
   - **Auto-Recovery**: Instantly returns to 🟢 Online state as soon as a new packet is observed.
 - **One-Click Launch**: Direct `Open Web GUI` action to launch the appliance dashboard in the system default browser (HTTP or HTTPS).
-- **Search & Filter**: Real-time filtering by node name, alias, or IP address.
+- **Search & Filter**: Real-time filtering by node name, alias, IP address (including secondary NICs), or MAC address.
 - **Multilingual Support**: Fully aligned with `ffmpeg-gui` with support for English, Spanish, and Catalan. Automatically detects system desktop language with instant in-app language switcher.
 
 ## Installation & Requirements

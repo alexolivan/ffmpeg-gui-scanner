@@ -3,7 +3,8 @@ import socket
 import threading
 import time
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
+from network_utils import get_local_subnets, resolve_node_endpoints
 
 try:
     from PyQt5 import QtCore
@@ -48,6 +49,7 @@ class DiscoveryListener(QtCore.QObject):
         port: int = 59990,
         offline_threshold: float = 10.0,
         expire_threshold: float = 60.0,
+        preferred_ips: Optional[Dict[str, str]] = None,
         parent: Optional[QtCore.QObject] = None
     ):
         super().__init__(parent) if parent else super().__init__()
@@ -56,6 +58,7 @@ class DiscoveryListener(QtCore.QObject):
         self.expire_threshold = expire_threshold
 
         self._nodes: Dict[str, Dict[str, Any]] = {}
+        self._preferred_ips: Dict[str, str] = dict(preferred_ips) if preferred_ips else {}
         self._lock = threading.Lock()
         self._running = False
         self._stop_event = threading.Event()
@@ -140,7 +143,7 @@ class DiscoveryListener(QtCore.QObject):
         logger.info("DiscoveryListener stopped.")
 
     def send_query(self) -> None:
-        """Broadcast an active discovery query across the local subnet."""
+        """Broadcast an active discovery query across all local subnets."""
         if not self._sock:
             return
         query_payload = {
@@ -150,10 +153,59 @@ class DiscoveryListener(QtCore.QObject):
         }
         try:
             data = json.dumps(query_payload).encode("utf-8")
-            self._sock.sendto(data, ("255.255.255.255", self.port))
-            logger.debug(f"Broadcast DISCOVER_QUERY sent to 255.255.255.255:{self.port}")
         except Exception as e:
-            logger.debug(f"Error broadcasting DISCOVER_QUERY: {e}")
+            logger.debug(f"Error encoding DISCOVER_QUERY: {e}")
+            return
+
+        destinations: List[str] = []
+        seen = set()
+        for sub in get_local_subnets():
+            bcast = sub.get("broadcast")
+            if bcast and bcast not in seen:
+                seen.add(bcast)
+                destinations.append(bcast)
+        if "255.255.255.255" not in seen:
+            destinations.append("255.255.255.255")
+
+        for dest_ip in destinations:
+            try:
+                self._sock.sendto(data, (dest_ip, self.port))
+                logger.debug(f"Broadcast DISCOVER_QUERY sent to {dest_ip}:{self.port}")
+            except Exception as e:
+                logger.debug(f"Error broadcasting DISCOVER_QUERY to {dest_ip}:{self.port}: {e}")
+
+    def set_preferred_ip(self, node_id: str, ip: Optional[str]) -> Optional[Dict[str, Any]]:
+        """Pin or unpin a preferred IP for a node and re-emit its resolved data."""
+        updated_msg: Optional[Dict[str, Any]] = None
+        with self._lock:
+            if ip:
+                self._preferred_ips[node_id] = ip
+            else:
+                self._preferred_ips.pop(node_id, None)
+
+            record = self._nodes.get(node_id)
+            if record:
+                raw_msg = dict(record.get("raw_msg") or record["data"])
+                sender_ip = record.get("sender_ip", raw_msg.get("ip", "127.0.0.1"))
+                current_ip = record["data"].get("ip")
+                resolved = resolve_node_endpoints(
+                    raw_msg,
+                    sender_ip,
+                    get_local_subnets(),
+                    preferred_ip=self._preferred_ips.get(node_id),
+                    current_ip=current_ip,
+                )
+                raw_msg["ip"] = resolved["selected_ip"]
+                raw_msg["web_url"] = resolved["selected_web_url"]
+                raw_msg["candidates"] = resolved["candidates"]
+                raw_msg["preferred_ip"] = resolved["preferred_ip"]
+                raw_msg["is_pinned"] = resolved["is_pinned"]
+                record["data"] = raw_msg
+                updated_msg = raw_msg
+
+        if updated_msg is not None:
+            self.node_discovered.emit(updated_msg)
+        return updated_msg
 
     def process_packet(self, data: bytes, addr: tuple) -> Optional[Dict[str, Any]]:
         """
@@ -176,34 +228,44 @@ class DiscoveryListener(QtCore.QObject):
         if not node_id or not isinstance(node_id, str):
             return None
 
-        # Fix IP if node reported 127.0.0.1 but arrived from remote peer
         sender_ip = addr[0]
-        reported_ip = msg.get("ip")
-        if (not reported_ip or reported_ip.startswith("127.")) and not sender_ip.startswith("127."):
-            msg["ip"] = sender_ip
-            # Reconstruct web_url with real sender IP if needed
-            http_port = msg.get("http_port", 8000)
-            https_port = msg.get("https_port")
-            if https_port:
-                msg["web_url"] = f"https://{sender_ip}:{https_port}"
-            else:
-                msg["web_url"] = f"http://{sender_ip}:{http_port}"
-
+        raw_msg = dict(msg)
         now = time.time()
         status_changed_to_online = False
+        local_subnets = get_local_subnets()
 
         with self._lock:
             existing = self._nodes.get(node_id)
+            current_ip = existing["data"].get("ip") if existing else None
+            preferred_ip = self._preferred_ips.get(node_id)
+
+            resolved = resolve_node_endpoints(
+                msg,
+                sender_ip,
+                local_subnets,
+                preferred_ip=preferred_ip,
+                current_ip=current_ip,
+            )
+            msg["ip"] = resolved["selected_ip"]
+            msg["web_url"] = resolved["selected_web_url"]
+            msg["candidates"] = resolved["candidates"]
+            msg["preferred_ip"] = resolved["preferred_ip"]
+            msg["is_pinned"] = resolved["is_pinned"]
+
             if existing:
                 prev_status = existing.get("status", "online")
                 if prev_status == "offline":
                     status_changed_to_online = True
                 existing["data"] = msg
+                existing["raw_msg"] = raw_msg
+                existing["sender_ip"] = sender_ip
                 existing["last_seen"] = now
                 existing["status"] = "online"
             else:
                 self._nodes[node_id] = {
                     "data": msg,
+                    "raw_msg": raw_msg,
+                    "sender_ip": sender_ip,
                     "last_seen": now,
                     "status": "online"
                 }
