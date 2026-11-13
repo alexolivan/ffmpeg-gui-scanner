@@ -155,6 +155,65 @@ class TestAppWindow(unittest.TestCase):
                 # Verify that environment in current process was restored after call
                 self.assertEqual(os.environ.get("LD_LIBRARY_PATH"), "/tmp/_MEI12345:/usr/lib")
 
+    def test_multi_nic_badge_pinning_and_search(self):
+        import json
+        import ipaddress
+        local_subnets = [{
+            "ip": "192.168.100.224",
+            "netmask": "255.255.255.0",
+            "network": ipaddress.IPv4Network("192.168.100.0/24"),
+            "broadcast": "192.168.100.255",
+            "iface": "eth0",
+            "is_link_local": False,
+        }]
+        beacon = {
+            "app": "ffmpeg-gui",
+            "protocol_version": 1,
+            "node_id": "winbox-node-1",
+            "node_name": "test3",
+            "node_alias": "TEST-3",
+            "ip": "192.168.5.217",
+            "ips": [
+                {"ip": "192.168.5.217", "netmask": "255.255.255.0", "iface": "eth0", "mac": "aa:bb:cc:dd:ee:01", "default": True},
+                {"ip": "192.168.100.221", "netmask": "255.255.255.0", "iface": "eth1", "mac": "aa:bb:cc:dd:ee:02", "default": False},
+            ],
+            "http_port": 8000,
+            "web_url": "http://192.168.5.217:8000",
+        }
+        with patch("discovery_client.get_local_subnets", return_value=local_subnets):
+            resolved = self.listener.process_packet(json.dumps(beacon).encode("utf-8"), ("192.168.100.221", 59990))
+            self.window.on_node_discovered(resolved)
+
+            ip_item = self.window.table.item(0, ScannerMainWindow.COL_IP)
+            self.assertEqual(ip_item.text(), "192.168.100.221 (+1)")
+            self.assertIn("aa:bb:cc:dd:ee:02", ip_item.toolTip())
+            self.assertIn("192.168.5.217", ip_item.toolTip())
+
+            # Search by secondary IP or MAC must match the row
+            self.window._filter_rows("192.168.5.217")
+            self.assertFalse(self.window.table.isRowHidden(0))
+            self.window._filter_rows("ee:02")
+            self.assertFalse(self.window.table.isRowHidden(0))
+            self.window._filter_rows("")
+
+            # Context menu builds candidate actions
+            menu = self.window._build_node_context_menu(0)
+            self.assertIsNotNone(menu)
+            labels = [a.text() for a in menu.actions() if a.text()]
+            self.assertTrue(any("192.168.100.221" in t for t in labels))
+            self.assertTrue(any("192.168.5.217" in t for t in labels))
+
+            # Pinning secondary IP updates row & URL, unpinning restores subnet match
+            self.window._select_node_ip("winbox-node-1", "192.168.5.217")
+            self.assertEqual(self.window.table.item(0, ScannerMainWindow.COL_IP).text(), "📌 192.168.5.217 (+1)")
+            self.assertEqual(
+                self.window.table.item(0, ScannerMainWindow.COL_STATUS).data(QtCore.Qt.UserRole + 1),
+                "http://192.168.5.217:8000",
+            )
+
+            self.window._select_node_ip("winbox-node-1", None)
+            self.assertEqual(self.window.table.item(0, ScannerMainWindow.COL_IP).text(), "192.168.100.221 (+1)")
+
 
 if __name__ == "__main__":
     unittest.main()

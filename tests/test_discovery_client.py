@@ -131,6 +131,165 @@ class TestDiscoveryClient(unittest.TestCase):
         self.assertEqual(parsed["cmd"], "DISCOVER_QUERY")
         self.assertEqual(parsed["app"], "ffmpeg-gui-scanner")
 
+    def test_multi_nic_subnet_match_picks_matching_subnet(self):
+        import ipaddress
+        local_subnets = [{
+            "ip": "192.168.100.224",
+            "netmask": "255.255.255.0",
+            "network": ipaddress.IPv4Network("192.168.100.0/24"),
+            "broadcast": "192.168.100.255",
+            "iface": "eth0",
+            "is_link_local": False,
+        }]
+        beacon = {
+            "app": "ffmpeg-gui",
+            "protocol_version": 1,
+            "node_id": "test3-uuid",
+            "node_name": "test3",
+            "ip": "192.168.5.217",
+            "ips": [
+                {"ip": "192.168.5.217", "netmask": "255.255.255.0", "iface": "eth0", "mac": "aa:bb:cc:00:00:01", "default": True},
+                {"ip": "192.168.100.221", "netmask": "255.255.255.0", "iface": "eth1", "mac": "aa:bb:cc:00:00:02", "default": False},
+            ],
+            "http_port": 8000,
+            "https_port": 8443,
+            "web_url": "https://192.168.5.217:8443",
+        }
+        raw = json.dumps(beacon).encode("utf-8")
+        with patch("discovery_client.get_local_subnets", return_value=local_subnets):
+            res = self.listener.process_packet(raw, ("192.168.100.221", 59990))
+
+        self.assertEqual(res["ip"], "192.168.100.221")
+        self.assertEqual(res["web_url"], "https://192.168.100.221:8443")
+        self.assertEqual(len(res["candidates"]), 2)
+
+    def test_multi_nic_anti_flapping_when_scanner_also_dual_homed(self):
+        import ipaddress
+        local_subnets = [
+            {
+                "ip": "192.168.5.10",
+                "netmask": "255.255.255.0",
+                "network": ipaddress.IPv4Network("192.168.5.0/24"),
+                "broadcast": "192.168.5.255",
+                "iface": "wlan0",
+                "is_link_local": False,
+            },
+            {
+                "ip": "192.168.100.224",
+                "netmask": "255.255.255.0",
+                "network": ipaddress.IPv4Network("192.168.100.0/24"),
+                "broadcast": "192.168.100.255",
+                "iface": "eth0",
+                "is_link_local": False,
+            },
+        ]
+        beacon = {
+            "app": "ffmpeg-gui",
+            "protocol_version": 1,
+            "node_id": "test3-dual",
+            "node_name": "test3",
+            "ip": "192.168.5.217",
+            "ips": [
+                {"ip": "192.168.5.217", "netmask": "255.255.255.0", "iface": "eth0", "mac": "aa:bb:cc:00:00:01", "default": True},
+                {"ip": "192.168.100.221", "netmask": "255.255.255.0", "iface": "eth1", "mac": "aa:bb:cc:00:00:02", "default": False},
+            ],
+            "http_port": 8000,
+        }
+        raw = json.dumps(beacon).encode("utf-8")
+        with patch("discovery_client.get_local_subnets", return_value=local_subnets):
+            r1 = self.listener.process_packet(raw, ("192.168.5.217", 59990))
+            r2 = self.listener.process_packet(raw, ("192.168.100.221", 59990))
+            r3 = self.listener.process_packet(raw, ("192.168.5.217", 59990))
+
+        self.assertEqual(r1["ip"], "192.168.100.221")
+        self.assertEqual(r2["ip"], "192.168.100.221")
+        self.assertEqual(r3["ip"], "192.168.100.221")
+
+    def test_legacy_beacon_fallback_to_sender_ip_in_subnet(self):
+        import ipaddress
+        local_subnets = [{
+            "ip": "192.168.100.224",
+            "netmask": "255.255.255.0",
+            "network": ipaddress.IPv4Network("192.168.100.0/24"),
+            "broadcast": "192.168.100.255",
+            "iface": "eth0",
+            "is_link_local": False,
+        }]
+        legacy_beacon = {
+            "app": "ffmpeg-gui",
+            "protocol_version": 1,
+            "node_id": "legacy-node",
+            "node_name": "Legacy Node",
+            "ip": "192.168.5.217",
+            "http_port": 8000,
+            "https_port": None,
+            "web_url": "http://192.168.5.217:8000",
+        }
+        raw = json.dumps(legacy_beacon).encode("utf-8")
+        with patch("discovery_client.get_local_subnets", return_value=local_subnets):
+            res = self.listener.process_packet(raw, ("192.168.100.221", 59990))
+
+        self.assertEqual(res["ip"], "192.168.100.221")
+        self.assertEqual(res["web_url"], "http://192.168.100.221:8000")
+
+    def test_set_preferred_ip_pins_and_unpins(self):
+        import ipaddress
+        local_subnets = [{
+            "ip": "192.168.100.224",
+            "netmask": "255.255.255.0",
+            "network": ipaddress.IPv4Network("192.168.100.0/24"),
+            "broadcast": "192.168.100.255",
+            "iface": "eth0",
+            "is_link_local": False,
+        }]
+        beacon = {
+            "app": "ffmpeg-gui",
+            "protocol_version": 1,
+            "node_id": "pin-node",
+            "node_name": "Pin Node",
+            "ip": "192.168.5.217",
+            "ips": [
+                {"ip": "192.168.5.217", "netmask": "255.255.255.0", "iface": "eth0", "default": True},
+                {"ip": "192.168.100.221", "netmask": "255.255.255.0", "iface": "eth1", "default": False},
+            ],
+            "http_port": 8000,
+        }
+        raw = json.dumps(beacon).encode("utf-8")
+        with patch("discovery_client.get_local_subnets", return_value=local_subnets):
+            r1 = self.listener.process_packet(raw, ("192.168.100.221", 59990))
+            self.assertEqual(r1["ip"], "192.168.100.221")
+            self.assertFalse(r1["is_pinned"])
+
+            pinned = self.listener.set_preferred_ip("pin-node", "192.168.5.217")
+            self.assertEqual(pinned["ip"], "192.168.5.217")
+            self.assertTrue(pinned["is_pinned"])
+
+            r2 = self.listener.process_packet(raw, ("192.168.100.221", 59990))
+            self.assertEqual(r2["ip"], "192.168.5.217")
+            self.assertTrue(r2["is_pinned"])
+
+            unpinned = self.listener.set_preferred_ip("pin-node", None)
+            self.assertEqual(unpinned["ip"], "192.168.100.221")
+            self.assertFalse(unpinned["is_pinned"])
+
+    def test_send_query_multi_subnet_broadcasts(self):
+        import ipaddress
+        mock_sock = MagicMock()
+        self.listener._sock = mock_sock
+        local_subnets = [{
+            "ip": "192.168.100.224",
+            "netmask": "255.255.255.0",
+            "network": ipaddress.IPv4Network("192.168.100.0/24"),
+            "broadcast": "192.168.100.255",
+            "iface": "eth0",
+            "is_link_local": False,
+        }]
+        with patch("discovery_client.get_local_subnets", return_value=local_subnets):
+            self.listener.send_query()
+
+        dests = [call.args[1] for call in mock_sock.sendto.call_args_list]
+        self.assertEqual(dests, [("192.168.100.255", 59998), ("255.255.255.255", 59998)])
+
 
 if __name__ == "__main__":
     unittest.main()

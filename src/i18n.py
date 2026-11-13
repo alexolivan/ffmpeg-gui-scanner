@@ -43,7 +43,15 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "tooltip_offline": "Appliance silent for >10s (disabled, updating, or disconnected)",
         "btn_open_gui": "Open Web GUI ↗",
         "stats_format": "Nodes: {total} ({online} online)",
-        "streams_format": "⚡ {active} streams / {services} svcs"
+        "streams_format": "⚡ {active} streams / {services} svcs",
+        "ip_same_subnet": "Same subnet",
+        "ip_gateway_tag": "Gateway",
+        "ip_auto_select": "Auto-select best subnet",
+        "action_copy_ip": "Copy IP ({ip})",
+        "action_copy_url": "Copy Web URL",
+        "ip_tooltip_header": "Discovered interfaces (click IP or right-click to switch):",
+        "ip_tooltip_pinned": "Pinned by user",
+        "status_copied": "Copied to clipboard: {value}"
     },
     "es": {
         "app_title": "FFmpeg GUI - Escáner de Equipos LAN",
@@ -68,7 +76,15 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "tooltip_offline": "Equipo en silencio >10s (desactivado, actualizando o desconectado)",
         "btn_open_gui": "Abrir Web GUI ↗",
         "stats_format": "Nodos: {total} ({online} en línea)",
-        "streams_format": "⚡ {active} streams / {services} svcs"
+        "streams_format": "⚡ {active} streams / {services} svcs",
+        "ip_same_subnet": "Misma subred",
+        "ip_gateway_tag": "Pasarela",
+        "ip_auto_select": "Auto-seleccionar mejor subred",
+        "action_copy_ip": "Copiar IP ({ip})",
+        "action_copy_url": "Copiar URL Web",
+        "ip_tooltip_header": "Interfaces descubiertas (clic en IP o botón derecho para cambiar):",
+        "ip_tooltip_pinned": "Fijada por el usuario",
+        "status_copied": "Copiado al portapapeles: {value}"
     },
     "ca": {
         "app_title": "FFmpeg GUI - Escàner d'Equips LAN",
@@ -93,7 +109,15 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "tooltip_offline": "Equip en silenci >10s (desactivat, actualitzant o desconnectat)",
         "btn_open_gui": "Obrir Web GUI ↗",
         "stats_format": "Nodes: {total} ({online} en línia)",
-        "streams_format": "⚡ {active} streams / {services} svcs"
+        "streams_format": "⚡ {active} streams / {services} svcs",
+        "ip_same_subnet": "Mateixa subxarxa",
+        "ip_gateway_tag": "Passarel·la",
+        "ip_auto_select": "Auto-seleccionar millor subxarxa",
+        "action_copy_ip": "Copiar IP ({ip})",
+        "action_copy_url": "Copiar URL Web",
+        "ip_tooltip_header": "Interfícies descobertes (clic a IP o botó dret per canviar):",
+        "ip_tooltip_pinned": "Fixada per l'usuari",
+        "status_copied": "Copiat al porta-retalls: {value}"
     }
 }
 
